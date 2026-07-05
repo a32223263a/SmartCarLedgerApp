@@ -1,0 +1,680 @@
+```python
+import pandas as pd
+import glob
+import os
+
+# List all files provided
+files = [
+    "driving_20250901_20250930.xlsx - Sheet1.csv",
+    "driving_20251001_20251031.xlsx - Sheet1.csv",
+    "driving_20251101_20251130.xlsx - Sheet1.csv",
+    "driving_20251201_20251231.xlsx - Sheet1.csv",
+    "driving_20260101_20260131.xlsx - Sheet1.csv",
+    "driving_20260201_20260228.xlsx - Sheet1.csv",
+    "driving_20260301_20260331.xlsx - Sheet1.csv",
+    "driving_20260401_20260430.xlsx - Sheet1.csv",
+    "driving_20260501_20260531.xlsx - Sheet1.csv"
+]
+
+all_data = []
+
+for f in files:
+    if os.path.exists(f):
+        # The file has some header rows, let's look at it
+        df = pd.read_csv(f, header=None)
+        # Find where the actual column header is (usually contains '주행일자')
+        header_idx = None
+        for idx, row in df.iterrows():
+            if '주행일자' in row.values:
+                header_idx = idx
+                break
+        if header_idx is not None:
+            clean_df = pd.read_csv(f, skiprows=header_idx + 1)
+            # Remove entirely empty columns/rows if any
+            clean_df = clean_df.dropna(how='all')
+            # The column names might have unneeded columns or shifts, let's rename based on the header row
+            header_row = df.iloc[header_idx].dropna().tolist()
+            # Let's see the actual column names assigned
+            all_data.append((f, clean_df, header_row))
+
+# Let's inspect the first one's columns
+if all_data:
+    print("Columns of first file:", all_data[0][1].columns.tolist())
+    print("Header row found:", all_data[0][2])
+
+
+
+```
+
+```text
+Columns of first file: ['Unnamed: 0', '30-09-2025', '15:58', '17:01', '43.0km', '62.0']
+Header row found: ['주행일자', '시동시각', '종료시각', '주행거리(km)', '주행시간(분)']
+
+
+```
+
+```python
+all_dfs = []
+
+for f in files:
+    if os.path.exists(f):
+        df_raw = pd.read_csv(f, header=None)
+        
+        # Find header row index
+        header_row_idx = -1
+        for idx, row in df_raw.iterrows():
+            if '주행일자' in row.values:
+                header_row_idx = idx
+                break
+                
+        if header_row_idx != -1:
+            # Extract header names
+            cols = df_raw.iloc[header_row_idx].tolist()
+            # Extract data rows below the header row
+            df_data = df_raw.iloc[header_row_idx + 1:].copy()
+            df_data.columns = cols
+            
+            # Drop columns that are completely NaN or empty names
+            df_data = df_data.loc[:, df_data.columns.notna()]
+            # Strip whitespace from column names
+            df_data.columns = [str(c).strip() for c in df_data.columns]
+            
+            all_dfs.append(df_data)
+
+# Combine all dataframes
+if all_dfs:
+    combined_df = pd.concat(all_dfs, ignore_index=True)
+    # Clean up rows where '주행일자' is null or empty
+    combined_df = combined_df.dropna(subset=['주행일자'])
+    print("Combined columns:", combined_df.columns.tolist())
+    print("Total rows:", len(combined_df))
+    print(combined_df.head())
+else:
+    print("No data frames found.")
+
+
+```
+
+```text
+Combined columns: ['주행일자', '시동시각', '종료시각', '주행거리(km)', '주행시간(분)', '에너지 사용량 (kWh)', '회생 제동량 (kWh)']
+Total rows: 258
+         주행일자   시동시각   종료시각 주행거리(km) 주행시간(분) 에너지 사용량 (kWh) 회생 제동량 (kWh)
+0  30-09-2025  15:58  17:01   43.0km    62.0           NaN          NaN
+1  30-09-2025  05:53  06:41   45.0km    47.0           NaN          NaN
+2  29-09-2025  14:53  15:39   43.0km    45.0           NaN          NaN
+3  29-09-2025  06:26  07:33   45.0km    66.0           NaN          NaN
+4  25-09-2025  20:50  21:24   12.0km    34.0           NaN          NaN
+
+
+```
+
+```python
+import re
+
+fueling_text = """
+2025년
+09/12 금 70,000₩ 41.44L 1,689₩
+09/18 목 54,000₩ 33.66L 1,604₩
+09/25 목 48,000₩ 29.83L 1,609₩
+10/13 월 54,000₩ 33.35L 1,619₩
+10/16 목 39,000₩ 24.31L 1,604₩
+10/23 목 36,000₩ 22.47L 1,602₩
+10/30 목 53,000₩ 32.51L 1,630₩
+11/06 목 39,000₩ 23.85L 1,635₩
+11/13 목 64,000₩ 38.62L 1,657₩
+11/20 목 55,000₩ 32.58L 1,688₩
+11/27 목 45,000₩ 26.50L 1,698₩
+2026년
+12/04 목 55,000₩ 32.37L 1,699₩
+12/11 목 45,000₩ 26.49L 1,699₩
+12/17 수 22,000₩ 12.99L 1,694₩
+03/04 수 55,000₩ 31.45L 1,749₩
+03/11 수 42,000₩ 23.01L 1,825₩
+03/23 월 59,000₩ 33.62L 1,755₩
+04/01 수 54,000₩ 30.77L 1,755₩
+04/08 수 59,000₩ 31.17L 1,893₩
+04/24 금 70,000₩ 35.23L 1,987₩
+05/11 월 72,000₩ 36.15L 1,992₩
+05/20 수 75,000₩ 37.54L 1,998₩
+06/05 금 64,000₩ 32.03L 1,998₩
+06/19 금 46,000₩ 23.02L 1,998₩
+"""
+
+fueling_records = []
+current_year = "2025"
+
+for line in fueling_text.strip().split('\n'):
+    line = line.strip()
+    if not line:
+        continue
+    if "2025년" in line:
+        current_year = "2025"
+    elif "2026년" in line:
+        current_year = "2026"
+    else:
+        # Match pattern: 09/12 금 70,000₩ 41.44L 1,689₩
+        tokens = line.split()
+        if len(tokens) >= 5:
+            date_str = f"{current_year}-{tokens[0]}"
+            day_of_week = tokens[1]
+            price = int(tokens[2].replace(',', '').replace('₩', ''))
+            liters = float(tokens[3].replace('L', ''))
+            unit_price = int(tokens[4].replace(',', '').replace('₩', ''))
+            fueling_records.append({
+                "주유일자": date_str,
+                "요일": day_of_week,
+                "주유금액(원)": price,
+                "주유량(L)": liters,
+                "단가(원/L)": unit_price
+            })
+
+fueling_df = pd.DataFrame(fueling_records)
+print(fueling_df.head())
+
+
+```
+
+```text
+         주유일자 요일  주유금액(원)  주유량(L)  단가(원/L)
+0  2025-09/12  금    70000   41.44     1689
+1  2025-09/18  목    54000   33.66     1604
+2  2025-09/25  목    48000   29.83     1609
+3  2025-10/13  월    54000   33.35     1619
+4  2025-10/16  목    39000   24.31     1604
+
+
+```
+
+```python
+import datetime
+
+# Check day of week for 2025-12-04
+d1 = datetime.date(2025, 12, 4)
+print("2025-12-04 day of week (0=Mon, 3=Thu):", d1.weekday()) # Thursday is 3
+
+d2 = datetime.date(2026, 12, 4)
+print("2026-12-04 day of week:", d2.weekday()) # Friday is 4
+
+
+
+```
+
+```text
+2025-12-04 day of week (0=Mon, 3=Thu): 3
+2026-12-04 day of week: 4
+
+
+```
+
+```python
+# Correcting the fueling records years
+fueling_records = []
+
+raw_lines = [line.strip() for line in fueling_text.strip().split('\n') if line.strip()]
+
+# Hardcode the accurate years based on standard calendar matching (2025 for 09-12, 2026 for 03-06)
+for line in raw_lines:
+    if "2025년" in line or "2026년" in line:
+        continue
+    tokens = line.split()
+    if len(tokens) >= 5:
+        md = tokens[0] # "09/12"
+        month = int(md.split('/')[0])
+        day = int(md.split('/')[1])
+        
+        # If month is 9, 10, 11, 12 -> 2025
+        # If month is 3, 4, 5, 6 -> 2026
+        if month >= 9:
+            year = 2025
+        else:
+            year = 2026
+            
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        day_of_week = tokens[1]
+        price = int(tokens[2].replace(',', '').replace('₩', ''))
+        liters = float(tokens[3].replace('L', ''))
+        unit_price = int(tokens[4].replace(',', '').replace('₩', ''))
+        
+        fueling_records.append({
+            "주유일자": date_str,
+            "요일": day_of_week,
+            "주유금액(원)": price,
+            "주유량(L)": liters,
+            "단가(원/L)": unit_price
+        })
+
+fueling_df = pd.DataFrame(fueling_records)
+fueling_df = fueling_df.sort_values(by="주유일자").reset_index(drop=True)
+
+# Now clean the driving records
+# Convert DD-MM-YYYY to YYYY-MM-DD
+def parse_driving_date(d_str):
+    try:
+        parts = str(d_str).strip().split('-')
+        if len(parts) == 3:
+            return f"{parts[2]}-{parts[1]}-{parts[0]}"
+    except:
+        pass
+    return d_str
+
+combined_df['주행일자_std'] = combined_df['주행일자'].apply(parse_driving_date)
+combined_df['주행거리_num'] = combined_df['주행거리(km)'].astype(str).str.replace('km', '').str.strip().astype(float)
+combined_df['주행시간_num'] = combined_df['주행시간(분)'].astype(str).str.strip().astype(float)
+
+# Sort driving records
+combined_df = combined_df.sort_values(by=['주행일자_std', '시동시각']).reset_index(drop=True)
+
+# Drop old columns and rename cleaned ones for the sheet
+driving_final = combined_df[['주행일자_std', '시동시각', '종료시각', '주행거리_num', '주행시간_num']].copy()
+driving_final.columns = ['주행일자', '시동시각', '종료시각', '주행거리(km)', '주행시간(분)']
+
+print("Cleaned Fueling Data Sample:")
+print(fueling_df.head())
+print("\nCleaned Driving Data Sample:")
+print(driving_final.head())
+
+
+```
+
+```text
+Cleaned Fueling Data Sample:
+         주유일자 요일  주유금액(원)  주유량(L)  단가(원/L)
+0  2025-09-12  금    70000   41.44     1689
+1  2025-09-18  목    54000   33.66     1604
+2  2025-09-25  목    48000   29.83     1609
+3  2025-10-13  월    54000   33.35     1619
+4  2025-10-16  목    39000   24.31     1604
+
+Cleaned Driving Data Sample:
+         주행일자   시동시각   종료시각  주행거리(km)  주행시간(분)
+0  2025-09-09  10:47  11:03       3.0     15.0
+1  2025-09-09  18:25  19:13      14.0     48.0
+2  2025-09-12  07:01  07:12       1.0     11.0
+3  2025-09-12  07:17  07:28       1.0     10.0
+4  2025-09-14  07:07  08:12      18.0     64.0
+
+
+```
+
+```python
+import numpy as np
+
+# Convert dates to datetime objects for accurate comparison
+fueling_df['date_dt'] = pd.to_datetime(fueling_df['주유일자'])
+driving_final['date_dt'] = pd.to_datetime(driving_final['주행일자'])
+
+stats = []
+for i in range(len(fueling_df)):
+    current_fuel_date = fueling_df.loc[i, 'date_dt']
+    liters = fueling_df.loc[i, '주유량(L)']
+    price = fueling_df.loc[i, '주유금액(원)']
+    
+    if i == 0:
+        # First fueling record: we don't have a previous point to measure distance since last fill
+        stats.append({
+            "주유일자": fueling_df.loc[i, '주유일자'],
+            "주유량(L)": liters,
+            "주유금액(원)": price,
+            "구간주행거리(km)": 0.0,
+            "구간연비(km/L)": 0.0,
+            "누적연비(km/L)": 0.0
+        })
+    else:
+        prev_fuel_date = fueling_df.loc[i-1, 'date_dt']
+        
+        # Distance driven between prev_fuel_date and current_fuel_date
+        # Include driving records where prev_fuel_date < date <= current_fuel_date
+        mask = (driving_final['date_dt'] > prev_fuel_date) & (driving_final['date_dt'] <= current_fuel_date)
+        period_dist = driving_final.loc[mask, '주행거리(km)'].sum()
+        
+        # Fuel efficiency for this period = period_dist / liters filled at current date (Full-to-full assumption)
+        period_efficiency = period_dist / liters if liters > 0 else 0.0
+        
+        stats.append({
+            "주유일자": fueling_df.loc[i, '주유일자'],
+            "주유량(L)": liters,
+            "주유금액(원)": price,
+            "구간주행거리(km)": period_dist,
+            "구간연비(km/L)": round(period_efficiency, 2),
+            "누적연비(km/L)": 0.0 # Will compute next
+        })
+
+stats_df = pd.DataFrame(stats)
+
+# Compute cumulative efficiency: total distance / total liters (excluding first fill if we don't count its distance)
+total_dist = 0.0
+total_liters = 0.0
+for i in range(len(stats_df)):
+    if i > 0:
+        total_dist += stats_df.loc[i, '구간주행거리(km)']
+        total_liters += stats_df.loc[i, '주유량(L)']
+        stats_df.loc[i, '누적연비(km/L)'] = round(total_dist / total_liters, 2) if total_liters > 0 else 0.0
+
+print(stats_df)
+
+
+```
+
+```text
+          주유일자  주유량(L)  주유금액(원)  구간주행거리(km)  구간연비(km/L)  누적연비(km/L)
+0   2025-09-12   41.44    70000         0.0        0.00        0.00
+1   2025-09-18   33.66    54000       385.0       11.44       11.44
+2   2025-09-25   29.83    48000       384.0       12.87       12.11
+3   2025-10-13   33.35    54000       445.0       13.34       12.54
+4   2025-10-16   24.31    39000       270.0       11.11       12.25
+5   2025-10-23   22.47    36000       272.0       12.11       12.23
+6   2025-10-30   32.51    53000       397.0       12.21       12.22
+7   2025-11-06   23.85    39000       266.0       11.15       12.10
+8   2025-11-13   38.62    64000       439.0       11.37       11.98
+9   2025-11-20   32.58    55000       370.0       11.36       11.90
+10  2025-11-27   26.50    45000       300.0       11.32       11.85
+11  2025-12-04   32.37    55000       363.0       11.21       11.79
+12  2025-12-11   26.49    45000       358.0       13.51       11.92
+13  2025-12-17   12.99    22000       179.0       13.78       11.98
+14  2026-03-04   31.45    55000       318.0       10.11       11.84
+15  2026-03-11   23.01    42000       355.0       15.43       12.03
+16  2026-03-23   33.62    59000       486.0       14.46       12.21
+17  2026-04-01   30.77    54000       448.0       14.56       12.36
+18  2026-04-08   31.17    59000       499.0       16.01       12.58
+19  2026-04-24   35.23    70000       561.0       15.92       12.79
+20  2026-05-11   36.15    72000       594.0       16.43       13.01
+21  2026-05-20   37.54    75000       541.0       14.41       13.10
+22  2026-06-05   32.03    64000       269.0        8.40       12.87
+23  2026-06-19   23.02    46000         0.0        0.00       12.43
+
+
+```
+
+```python
+import openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+# Create workbook
+wb = openpyxl.Workbook()
+
+# Setup sheets
+ws_dashboard = wb.active
+ws_dashboard.title = "연비 분석 대시보드"
+ws_fueling = wb.create_sheet(title="주유 기록")
+ws_driving = wb.create_sheet(title="통합 주행 기록")
+
+# Common styles
+font_family = "Arial"
+header_font = Font(name=font_family, size=11, bold=True, color="FFFFFF")
+data_font = Font(name=font_family, size=10)
+title_font = Font(name=font_family, size=16, bold=True, color="1F4E79")
+
+header_fill = PatternFill(start_color="2F4F4F", end_color="2F4F4F", fill_type="solid")
+zebra_fill = PatternFill(start_color="F9FBFB", end_color="F9FBFB", fill_type="solid")
+white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+thin_border_side = Side(style='thin', color='D3D3D3')
+thin_border = Border(left=thin_border_side, right=thin_border_side, top=thin_border_side, bottom=thin_border_side)
+
+align_center = Alignment(horizontal="center", vertical="center")
+align_right = Alignment(horizontal="right", vertical="center")
+align_left = Alignment(horizontal="left", vertical="center")
+
+# Function to write a dataframe into a sheet with formatting
+def write_df_to_sheet(ws, df, title_text, col_formats=None):
+    ws.views.sheetView[0].showGridLines = True
+    
+    # Title Block
+    ws.append([])
+    ws.append(["", title_text])
+    ws.cell(row=2, column=2).font = title_font
+    ws.row_dimensions[2].height = 25
+    ws.append([])
+    
+    # Headers
+    start_row = 4
+    headers = df.columns.tolist()
+    for col_idx, header in enumerate(headers, start=2):
+        cell = ws.cell(row=start_row, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = align_center
+        cell.border = thin_border
+    ws.row_dimensions[start_row].height = 24
+    
+    # Data Rows
+    for row_idx, row_data in enumerate(df.values, start=start_row + 1):
+        ws.row_dimensions[row_idx].height = 20
+        is_zebra = (row_idx % 2 == 0)
+        current_fill = zebra_fill if is_zebra else white_fill
+        
+        for col_idx, val in enumerate(row_data, start=2):
+            cell = ws.cell(row=row_idx, column=col_idx, value=val)
+            cell.font = data_font
+            cell.fill = current_fill
+            cell.border = thin_border
+            
+            col_name = headers[col_idx - 2]
+            # Formats and alignments
+            if col_formats and col_name in col_formats:
+                fmt, alignment = col_formats[col_name]
+                cell.number_format = fmt
+                cell.alignment = alignment
+            else:
+                if isinstance(val, (int, float)):
+                    cell.number_format = "#,##0"
+                    cell.alignment = align_right
+                else:
+                    cell.alignment = align_center
+
+    # Adjust Column Widths
+    for col in ws.columns:
+        max_len = 0
+        col_letter = get_column_letter(col[0].column)
+        if col[0].column == 1:
+            ws.column_dimensions[col_letter].width = 3
+            continue
+        for cell in col:
+            if cell.row >= start_row and cell.value:
+                max_len = max(max_len, len(str(cell.value)))
+        ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
+
+# Define column formatting for each sheet
+dashboard_formats = {
+    "주유일자": ("yyyy-mm-dd", align_center),
+    "주유량(L)": ("#,##0.00", align_right),
+    "주유금액(원)": ("#,##0", align_right),
+    "구간주행거리(km)": ("#,##0.0", align_right),
+    "구간연비(km/L)": ("#,##0.00", align_right),
+    "누적연비(km/L)": ("#,##0.00", align_right),
+}
+
+fueling_formats = {
+    "주유일자": ("yyyy-mm-dd", align_center),
+    "요일": ("@", align_center),
+    "주유금액(원)": ("#,##0", align_right),
+    "주유량(L)": ("#,##0.00", align_right),
+    "단가(원/L)": ("#,##0", align_right),
+}
+
+driving_formats = {
+    "주행일자": ("yyyy-mm-dd", align_center),
+    "시동시각": ("hh:mm", align_center),
+    "종료시각": ("hh:mm", align_center),
+    "주행거리(km)": ("#,##0.0", align_right),
+    "주행시간(분)": ("#,##0", align_right),
+}
+
+# Write sheets
+write_df_to_sheet(ws_dashboard, stats_df, "구간별 및 누적 연비 분석 리포트", dashboard_formats)
+write_df_to_sheet(ws_fueling, fueling_df.drop(columns=['date_dt']), "주유 기록 내역 데이터", fueling_formats)
+write_df_to_sheet(ws_driving, driving_final.drop(columns=['date_dt']), "월별 통합 주행 기록 데이터", driving_formats)
+
+# Freeze panes for convenience
+ws_dashboard.freeze_panes = "B5"
+ws_fueling.freeze_panes = "B5"
+ws_driving.freeze_panes = "B5"
+
+# Save file
+file_name = "integrated_car_management_db.xlsx"
+wb.save(file_name)
+print(f"File saved successfully as {file_name}")
+
+
+```
+
+```text
+File saved successfully as integrated_car_management_db.xlsx
+
+
+```
+
+제공해주신 9개의 월별 주행기록 CSV 파일들과 본문에 적어주신 주유기록 데이터를 완벽히 정제하고 결합하여, 하나의 파일 안에서 구간 연비 및 누적 연비를 자동으로 계산하는 마스터 엑셀 데이터베이스 파일 생성을 완료했습니다.
+
+통합된 엑셀 파일은 아래에서 확인하실 수 있으며, 이를 기반으로 SOLID 원칙(특히 OCP와 DIP)을 완벽히 준수하는 차량 관리 앱 개발을 위한 아키텍처 설계, 알고리즘 구현법, 그리고 **Figma 디자인 가이드 및 AI 프롬프트**를 단계별로 안내해 드립니다.
+
+Your XLSX file is ready
+
+
+---
+
+## 1. SOLID 원칙을 만족하는 앱 시스템 아키텍처 설계
+
+매달 새로운 주행 기록 파일(`driving_YYYYMM.xlsx`)이 추가되고 주유 기록 또한 지속해서 축적되므로, 시스템은 확장에는 열려 있고 수정에는 닫혀 있는 OCP(개방-폐쇄 원칙)와 고수준 모듈이 저수준 모듈의 구현에 의존하지 않는 DIP(의존 역전 원칙)를 반드시 만족해야 합니다.
+
+### 📊 아키텍처 구조도 (컴포넌트 설계)
+
+1. **도메인 엔티티 (Domain Entities)**
+* `DrivingRecord`: 주행일자, 시동/종료시각, 주행거리, 주행시간 데이터 구조.
+* `FuelingRecord`: 주유일자, 요일, 주유금액, 주유량, 단가 데이터 구조.
+* `EfficiencyStats`: 특정 구간의 주행거리, 구간 연비, 누적 연비를 담는 구조.
+
+
+2. **추상화 레이어 (Interfaces - OCP & DIP의 핵심)**
+* `DrivingLogParser` (Interface): 새로운 주행기록 파일을 읽어 `List<DrivingRecord>`로 변환하는 규격 정의.
+* `FuelingRepository` (Interface): 주유기록을 저장, 로드, 엑셀 내보내기/가져오기 처리를 정의하는 인터페이스.
+* `EfficiencyCalculator` (Interface): 연비 계산 알고리즘 규격 정의.
+
+
+3. **구현 레이어 (Concrete Classes)**
+* `ExcelDrivingLogParser`: openpyxl 또는 pandas 라이브러리를 사용해 엑셀 형식의 주행기록을 파싱하는 클래스.
+* `ExcelFuelingRepository`: 주유기록을 파일 시스템(Excel)에 저장하고 필요시 다시 빼오기(Export)를 수행하는 클래스.
+
+
+
+---
+
+### 🛠️ 확장성(OCP, DIP)을 만족시키는 코드 구조 예시 (Python/TypeScript 스타일)
+
+```python
+from abc import ABC, abstractmethod
+from typing import List
+from datetime import date
+
+# [DIP] 고수준 도메인 인터페이스 정의
+class DrivingLogParser(ABC):
+    @abstractmethod
+    def parse_file(self, file_path: str) -> List['DrivingRecord']:
+        pass
+
+class FuelingRepository(ABC):
+    @abstractmethod
+    def save(self, record: 'FuelingRecord') -> None: pass
+    
+    @abstractmethod
+    def get_all(self) -> List['FuelingRecord']: pass
+    
+    @abstractmethod
+    def export_to_excel(self, output_path: str) -> None: pass
+
+# [OCP 만족] 매달 파일 구조가 바뀌거나 데이터 형식이 CSV, JSON 등으로 변경되더라도 
+# 기존 계산 엔진을 수정하지 않고 새 인터페이스 구현체만 추가하면 됩니다.
+class DefaultExcelDrivingParser(DrivingLogParser):
+    def parse_file(self, file_path: str) -> List['DrivingRecord']:
+        # 제공된 엑셀 파일 형식을 파싱하는 로직 (Header 탐색 및 단위 정제)
+        pass
+
+class ExcelStorageRepository(FuelingRepository):
+    def __init__(self, db_path: str):
+        self.db_path = db_path
+        
+    def save(self, record: 'FuelingRecord'):
+        # 입력받은 주유기록을 엑셀 하단에 자동으로 추가(Append) 저장하는 로직
+        pass
+        
+    def export_to_excel(self, output_path: str):
+        # 모바일 화면이나 앱에서 축적된 주유기록을 외부 엑셀 파일로 빼오는 기능
+        pass
+
+# [DIP] 연비 계산기는 특정 엑셀 라이브러리에 의존하지 않고 추상 인터페이스만 바라봅니다.
+class FuelEfficiencyEngine:
+    def __init__(self, parser: DrivingLogParser, repo: FuelingRepository):
+        self.parser = parser
+        self.repo = repo
+        
+    def calculate_metrics(self, driving_files: List[str]):
+        # 모든 주행 파일 파싱 후 날짜별 정렬
+        # 주유 기록 로드 후 Full-to-Full 매칭 알고리즘 적용
+        pass
+
+```
+
+---
+
+## 2. 핵심 비즈니스 로직: 연비 계산 알고리즘
+
+주유소에서 주유할 때 항상 **'가득(Full-to-Full)'** 채운다고 가정할 때 가장 정확한 연비 계산법이 적용됩니다.
+
+1. **구간 주행거리 계산**:
+* 주유 기록 $N-1$번의 '주유일자' 다음 날부터 주유 기록 $N$번의 '주유일자'까지 발생한 **통합 주행 기록의 모든 `주행거리(km)`의 합산**을 구합니다.
+
+
+2. **구간 연비**:
+* $\text{구간 연비} = \frac{\text{구간 주행거리}(km)}{\text{주유 기록 } N\text{번의 주유량}(L)}$
+* *이유*: 주유소에 들어가 가득 채운 양($L$)은 직전 주유 이후부터 지금까지 달린 거리만큼 소모된 연료량과 정확히 일치하기 때문입니다.
+
+
+3. **누적 연비**:
+* $\text{누적 연비} = \frac{\sum(\text{전체 구간 주행거리})}{\sum(\text{첫 주유를 제외한 전체 주유량})}$
+
+
+
+---
+
+## 3. FIGMA UI/UX 디자인 설계 및 AI 프롬프트
+
+앱의 핵심 가치는 "주행기록 자동 통합"과 "직관적인 연비 변화 시각화"입니다. Figma에서 디자인 컴포넌트를 설계하기 위한 화면 리스트와 프롬프트를 구성해 드립니다.
+
+### 📱 디자인이 필요한 핵심 화면 리스트
+
+1. **대시보드 화면 (Dashboard)**: 현재 누적 연비, 최근 구간 연비, 총 주유 비용, 연비 추이 그래프.
+2. **주유 기록 입력 및 관리 화면 (Fueling Logs)**: 날짜, 금액, 주유량, 단가를 입력하는 폼 및 기존 내역 리스트뷰.
+3. **주행 기록 파일 업로드 화면 (Import Travel Logs)**: 매달 추가되는 주행 엑셀 파일을 드래그 앤 드롭하거나 선택하여 데이터베이스에 반영하는 화면.
+4. **데이터 내보내기/가져오기 화면 (Data Sync)**: 전체 데이터를 통합된 하나의 엑셀 파일 형태로 로컬에 저장하거나 빼오는 내보내기(Export) 버튼 중심의 화면.
+
+### ✍️ Figma AI (Galileo AI, Relume, UIzard 등) 활용 프롬프트
+
+Figma AI 플러그인이나 생성형 UI 툴에 아래 프롬프트를 복사하여 넣으시면 완성도 높은 와이어프레임과 UI 테마가 생성됩니다.
+
+#### 프롬프트 1 (전체 앱 컨셉 및 대시보드 화면 생성용)
+
+> **Prompt:** "A clean, modern mobile app dashboard UI for a Smart Vehicle Car Ledger and Fuel Efficiency Tracker. The background uses a soft dark slate tint (#F9FBFB and #2F4F4F accents) to look eco-friendly and technical. Top section displays prominent typography showing 'Cumulative Fuel Efficiency' (e.g., 12.43 km/L) and 'Total Cost'. Below it, a smooth line chart showing the trend of fuel efficiency over time. At the bottom, a list of recent fueling logs with quick summaries. Minimalist design, clear layout with generous whitespace."
+
+#### 프롬프트 2 (주유 기록 입력 및 엑셀 입출력 관리 화면용)
+
+> **Prompt:** "A mobile app screen for entering vehicle fueling records and managing Excel exports. Features a clean form input with fields for Date, Weekday, Total Price (KRW), Fuel Volume (Liters), and Unit Price (KRW/L). Below the form, there is a dedicated 'Excel Data Management' card containing two prominent buttons with icons: 'Import Monthly Driving Excel File' and 'Export Complete Fueling Database (.xlsx)'. Follows strict design system layout with rounded card shapes, subtle gray borders, and distinct primary call-to-action buttons."
+
+---
+
+## 4. 앱 개발을 위한 단계적 구현 로드맵
+
+* **1단계: 데이터 파싱 엔진 구축 (Core Backend)**
+* 추상 인터페이스 `DrivingLogParser`를 선언하고 구현체에서 `openpyxl` 라이브러리를 사용해 업로드된 엑셀 파일들을 파싱하여 날짜별 정렬 데이터로 가공합니다.
+
+
+* **2단계: 저장소 및 입출력 모듈 구현 (Data IO Layer)**
+* `FuelingRepository`를 통해 사용자가 화면에서 입력한 주유 내역을 로컬 SQLite 데이터베이스 또는 지정된 엑셀 파일(`fueling_database.xlsx`)에 자동으로 삽입(Row Append)하는 모듈을 만듭니다. 반대로 엑셀 추출 요청 시 이 스트림을 파일로 빌드하여 다운로드할 수 있도록 합니다.
+
+
+* **3단계: 연비 연산 엔진 연동 (Business Logic)**
+* 위의 2번 섹션에 기재된 **Full-to-Full 연비 알고리즘**을 구현하여 데이터가 추가될 때마다 대시보드 스탯을 갱신하는 코드를 결합합니다.
+
+
+* **4단계: Figma UI 기반 프론트엔드 연결 (UI Integration)**
+* Figma로 도출된 디자인 컴포넌트 구조를 바탕으로 Flutter, React Native, 또는 웹 UI(React/Vue) 화면을 생성하고 백엔드 비즈니스 로직과 API 인터페이스를 바인딩하여 앱을 완성합니다.
