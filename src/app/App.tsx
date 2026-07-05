@@ -150,7 +150,7 @@ export default function App() {
 
     const validLitersForCum = logs.slice(1).reduce((s, d) => s + d.liters, 0);
     const cumulativeEff = validLitersForCum > 0 ? totalDist / validLitersForCum : 0;
-    const latestSegEff = logs.length > i => logs[logs.length - 1].segEff : 0;
+    const latestSegEff = logs.length > 1 ? logs[logs.length - 1].segEff : 0;
 
     const chartData = logs
       .filter((d) => d.cumEff > 0)
